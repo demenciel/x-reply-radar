@@ -6,5 +6,5 @@ export default defineConfig({
     wrangler: { configPath: './wrangler.toml' },
     miniflare: { bindings: { TEST_MIGRATIONS: await readD1Migrations('./migrations') } },
   }))],
-  test: { setupFiles: ['./test/setup.ts'] },
+  test: { include: ['test/**/*.test.ts'], setupFiles: ['./test/setup.ts'] },
 });

@@ -9,7 +9,9 @@
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "check": "npm run typecheck && npm test",
+    "test:deploy": "node --test test/deploy-config.test.mjs",
+    "prepare:deploy": "node scripts/prepare-deploy.mjs",
+    "check": "npm run typecheck && npm test && npm run test:deploy",
     "build": "wrangler deploy --dry-run --outdir dist"
   },
   "overrides": { "sharp": "0.35.5" },

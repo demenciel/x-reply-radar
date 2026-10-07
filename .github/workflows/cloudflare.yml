@@ -1,0 +1,105 @@
+name: Check and deploy Cloudflare Worker
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  WRANGLER_SEND_METRICS: 'false'
+
+jobs:
+  check:
+    name: Typecheck, test and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the triggering commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm run build
+
+  deploy:
+    name: Deploy production
+    needs: check
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: cloudflare-production
+      cancel-in-progress: false
+    steps:
+      - name: Check out the verified commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Check this is still the latest main commit
+        id: latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          latest_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')
+          if [ "$latest_sha" = "$GITHUB_SHA" ]; then
+            echo 'current=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'current=false' >> "$GITHUB_OUTPUT"
+            echo 'A newer main commit exists; this deployment was skipped.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Verify deployment credentials
+        if: steps.latest.outputs.current == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          missing=0
+          for setting in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID; do
+            if [ -z "${!setting}" ]; then
+              echo "::error::Add $setting in repository Settings > Secrets and variables > Actions > Secrets."
+              missing=1
+            fi
+          done
+          exit "$missing"
+      - name: Set up Node.js
+        if: steps.latest.outputs.current == 'true'
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install the locked toolchain
+        if: steps.latest.outputs.current == 'true'
+        run: npm ci
+      - name: Prepare the production binding and preserve runtime variables
+        if: steps.latest.outputs.current == 'true'
+        env:
+          CLOUDFLARE_D1_DATABASE_ID: ${{ vars.CLOUDFLARE_D1_DATABASE_ID }}
+        run: npm run prepare:deploy
+      - name: Apply pending D1 migrations
+        if: steps.latest.outputs.current == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --no-install wrangler d1 migrations apply DB --remote --config .wrangler.deploy.toml
+      - name: Deploy the Worker and cron schedule
+        if: steps.latest.outputs.current == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --no-install wrangler deploy --config .wrangler.deploy.toml --message "GitHub $GITHUB_SHA"
+      - name: Record the deployment
+        if: steps.latest.outputs.current == 'true'
+        run: |
+          echo "Deployed x-reply-radar from commit $GITHUB_SHA after applying D1 migrations." >> "$GITHUB_STEP_SUMMARY"
+          echo 'Cloudflare runtime variables and Worker secrets were preserved.' >> "$GITHUB_STEP_SUMMARY"

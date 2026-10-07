@@ -55,6 +55,40 @@ Wrangler prints your URL, for example `https://x-reply-radar.YOUR-SUBDOMAIN.work
 
 The lockfile pins the verified development toolchain; use `npm ci` for subsequent installs. `.npmrc` avoids an npm 11 optional-peer resolver crash. The `sharp` override pins the patched image library used internally by local Cloudflare tooling; it is not bundled in the Worker.
 
+## Automatic GitHub → Cloudflare deployments
+
+[The deployment workflow](.github/workflows/cloudflare.yml) runs typecheck, all tests and a deployment dry run on pull requests and pushes to `main`. After checks pass, a push to `main` applies pending D1 migrations and deploys that exact commit, including the one-minute cron. Pull requests run checks only. You can also run it manually under **GitHub → Actions → Check and deploy Cloudflare Worker → Run workflow**, selecting `main`.
+
+Deployment uses the lockfile's Wrangler directly and pinned official checkout/setup-node actions. Production runs are serialized without interrupting a migration/deployment in progress. An old queued commit is skipped if a newer `main` commit exists. A failed check or migration prevents publishing the new Worker code. Make migrations compatible with the currently deployed code: the schema update happens before the Worker update, and a later deployment failure does not roll back successful migrations.
+
+### One-time repository configuration
+
+In [GitHub Settings → Secrets and variables → Actions](https://github.com/demenciel/x-reply-radar/settings/secrets/actions), configure:
+
+| Kind | Name | Value |
+|---|---|---|
+| Secret | CLOUDFLARE_API_TOKEN | Cloudflare CI API token scoped to the target account |
+| Secret | CLOUDFLARE_ACCOUNT_ID | Target account ID; already configured for this repository |
+| Variable | CLOUDFLARE_D1_DATABASE_ID | UUID of the D1 database dedicated to x-reply-radar |
+
+[Cloudflare's GitHub Actions guide](https://developers.cloudflare.com/workers/ci-cd/external-cicd/github-actions/) explains API-token authentication. The token needs Workers deployment access and **D1 Edit** to apply migrations. For a first deployment that creates the Worker, use Workers **Admin** at the Workers product scope; after it exists you can restrict the token to Workers **Editor** on x-reply-radar, retaining the D1 permission needed for migrations. Scope access to the intended account. See [Workers permissions](https://developers.cloudflare.com/workers/authorization/) for the current token roles.
+
+Create a dedicated database with `npx wrangler d1 create x-reply-radar`, then save its UUID as `CLOUDFLARE_D1_DATABASE_ID`. The repository variable overrides `database_id` for CI; local development continues to use the source configuration. Alternatively, commit a real database ID in `wrangler.toml` and omit the repository variable. Missing credentials or a placeholder/invalid database ID stop deployment with a clear error before any migration or upload.
+
+**Current activation prerequisite:** Cloudflare refused creation because this account has reached its D1 database limit. Make a database slot available or raise the account limit, create the dedicated database, and save its UUID. The workflow does not delete or repurpose other applications' databases.
+
+The API token must be entered privately in GitHub Secrets. The local Wrangler OAuth login cannot be used as a permanent CI token. The Worker API keys and ADMIN_TOKEN remain **Cloudflare Worker secrets**, configured with the existing `wrangler secret put` commands or the Cloudflare dashboard; they do not need to be copied to GitHub.
+
+### Runtime settings remain controlled by Cloudflare
+
+`npm run prepare:deploy` produces an ignored `.wrangler.deploy.toml` beside the source config. It injects the production database UUID, preserves `keep_vars = true`, and omits `[vars]` from the CI upload. This matters because explicitly uploaded variable values can override dashboard values even with `keep_vars` enabled. The original `wrangler.toml` stays unchanged for local development and manual initial setup.
+
+As a result, code, bindings, migrations, cron and other Wrangler deployment settings reflect the repository. Watched accounts, operating hours, enabled/paused state, polling interval, model/provider settings and secrets retain their Cloudflare values across CI deployments. To change those runtime settings, use **Workers & Pages → x-reply-radar → Settings → Variables and Secrets**. If you change `LLM_MODEL` there, that value takes priority over the `gpt-luna-6` application fallback.
+
+On the first **CI** deployment, set the runtime variables in Cloudflare, especially WATCHED_ACCOUNTS. Without that variable the application defaults to an empty list and performs no provider calls. Set X_REPLY_RADAR_ENABLED=false while entering the required API keys and email configuration, then test `/test/tweet`, inspect `/status`, and enable polling. The initial defaults table below is supplied by a manual deployment using `wrangler.toml`; CI deliberately leaves runtime-variable ownership with Cloudflare.
+
+Once the token and database ID are configured, rerun the failed deploy job or use **Run workflow**. Deployment results and the exact commit appear in the Actions run summary. Avoid connecting a second independent deployment pipeline to the same Worker; this workflow is the deployment source for this repository.
+
 ## Provider setup
 
 ### TwitterAPI.io
@@ -95,7 +129,7 @@ Go to **Workers & Pages → x-reply-radar → Settings → Variables and Secrets
 
 Keep the real Cron Trigger at `* * * * *`. Runtime variables control effective polling, not the actual cron schedule. [Cloudflare cron configuration](https://developers.cloudflare.com/workers/configuration/cron-triggers/) is separate from variables. If the base cron runs every 5 minutes, an interval of 1 minute cannot make it poll faster than those invocations.
 
-`keep_vars = true` preserves dashboard-configured variables on later Wrangler deployments. [Wrangler documents this option](https://developers.cloudflare.com/workers/wrangler/configuration/). The `[vars]` block supplies initial values; review config on `/status` after any deployment or dashboard change, particularly if you intentionally supply a different value in Wrangler.
+The GitHub workflow preserves dashboard-configured variables by combining `keep_vars = true` with an upload config that omits `[vars]`. [Wrangler documents variable preservation](https://developers.cloudflare.com/workers/wrangler/configuration/). A manual `wrangler deploy` using the source config explicitly supplies `[vars]` and can override matching dashboard settings. For later manual code deployments that should preserve your runtime settings, set the real database UUID, run `npm run prepare:deploy`, then `npx wrangler deploy --config .wrangler.deploy.toml`. Review `/status` after deployment or dashboard changes.
 
 ### Normal Variables
 
@@ -262,6 +296,7 @@ Logs are concise structured JSON with event, stage, success and, for tweet proce
 ```sh
 npm run typecheck
 npm test
+npm run test:deploy
 npm run build
 npm audit
 ```
@@ -270,6 +305,9 @@ Tests run in Cloudflare's local Workers runtime with real D1 SQL and migrations,
 
 ```text
 x-reply-radar/
+├── .github/
+│   └── workflows/
+│       └── cloudflare.yml
 ├── .env.example
 ├── .gitignore
 ├── .npmrc
@@ -281,6 +319,8 @@ x-reply-radar/
 ├── tsconfig.json
 ├── vitest.config.ts
 ├── wrangler.toml
+├── scripts/
+│   └── prepare-deploy.mjs
 ├── src/
 │   ├── config.ts
 │   ├── email.ts
@@ -298,6 +338,7 @@ x-reply-radar/
 │   └── types.ts
 └── test/
     ├── config.test.ts
+    ├── deploy-config.test.mjs
     ├── setup.ts
     └── worker.test.ts
 ```
