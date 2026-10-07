@@ -17,6 +17,8 @@ const rawTweet = (id: string, createdAt = new Date(Date.now() - 1000).toISOStrin
 const page = (tweets: unknown[], cursor = '') => Response.json({ tweets, has_next_page: Boolean(cursor), next_cursor: cursor });
 function mockServices(tweets: unknown[] = [], modelResult: unknown = replies) {
   const mock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+    // Exercise actual Workerd Request validation before replacing provider responses.
+    new Request(input, init);
     const url = String(input);
     if (url.startsWith('https://api.twitterapi.io/')) return page(tweets);
     if (url.endsWith('/chat/completions')) return Response.json({ choices: [{ message: { content: JSON.stringify(modelResult) } }] });

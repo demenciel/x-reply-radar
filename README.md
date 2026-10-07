@@ -348,7 +348,7 @@ npm run build
 npm audit
 ```
 
-Tests run in Cloudflare's local Workers runtime with real D1 SQL and migrations, mocked paid providers, and no production secrets. They cover gates, IANA/DST/overnight windows, persisted cadence, auth, atomic locks and fencing, baselines/account additions, pagination, reply/repost exclusion, quotes, URL encoding, HTML escaping, malformed generation repair, skips, retries, daily caps, and email uncertainty/retention.
+Tests run in Cloudflare's local Workers runtime with real D1 SQL and migrations, mocked paid providers, and no production secrets. Provider mocks also construct real Workerd requests so runtime-incompatible request options fail tests. Coverage includes redirect rejection without forwarding credentials, gates, IANA/DST/overnight windows, persisted cadence, auth, atomic locks and fencing, baselines/account additions, pagination, reply/repost exclusion, quotes, URL encoding, HTML escaping, malformed generation repair, skips, retries, daily caps, and email uncertainty/retention.
 
 ```text
 x-reply-radar/
