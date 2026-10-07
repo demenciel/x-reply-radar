@@ -21,7 +21,7 @@ Direct `fetch()` calls, TypeScript, no runtime npm dependencies, SDKs, dashboard
 
 ## Quick setup and deployment
 
-This repository's database and Worker are already provisioned. Use **Finish the existing deployment** below for the remaining credentials and activation; the quick setup commands in this section are for a fresh installation.
+This repository's database and Worker are already provisioned and configured. See **Finish the existing deployment** below for current deployment status and reconfiguration commands; the quick setup commands in this section are for a fresh installation.
 
 Prerequisites: Node.js 22.12 or newer, a Cloudflare account with Workers and D1, a TwitterAPI.io key, a Resend key and verified sending domain, and an OpenAI-compatible model key.
 
@@ -59,14 +59,15 @@ The lockfile pins the verified development toolchain; use `npm ci` for subsequen
 
 ## Finish the existing deployment
 
-The Worker is deployed at `https://x-reply-radar.alexcouture97.workers.dev` with its one-minute cron attached, D1 migrations are applied, and both GitHub's account-ID secret and database-ID variable are configured. ADMIN_TOKEN is configured in Cloudflare; its private local copy is in the ignored `.dev.vars` file with permissions 0600. Live checks verified authenticated `/health` and `/status`, unauthorized rejection, and `/poll` returning `disabled` without provider calls. The Worker is paused with an empty watched-account list while provider credentials are missing.
+Setup is complete. The Worker is deployed at `https://x-reply-radar.alexcouture97.workers.dev` with its one-minute cron attached, D1 migrations are applied, and polling is enabled for 11 selected accounts. All Worker secrets and GitHub deployment credentials are configured. GitHub checks and deployment passed, and a live test generated three drafts using GPT-6 Luna and sent one alert accepted by Resend. ADMIN_TOKEN's private local copy is in the ignored `.dev.vars` file with permissions 0600. The first scheduled poll during active hours establishes the baseline without historical alerts.
 
 If a future deployment hits the account's cron-trigger limit, free an unused cron slot under **Workers & Pages → existing Worker → Settings → Triggers → Cron Triggers → ⋯ → Delete**, or raise the account limit. Removing a cron stops that Worker's scheduled runs. The current deployment successfully attached x-reply-radar's cron after a slot was freed.
 
-Run from the project directory. Each secret command prompts privately; do not put literal keys in shell commands or paste them into chat.
+The commands below are for reconfiguration; they are not required for the completed setup. Run from the project directory and pause polling before replacing credentials. Each secret command prompts privately; do not put literal keys in shell commands or paste them into chat.
 
 ```sh
 npm run prepare:deploy
+npx wrangler deploy --config .wrangler.deploy.toml --var X_REPLY_RADAR_ENABLED:false
 npx wrangler secret put TWITTERAPI_IO_KEY --config .wrangler.deploy.toml
 npx wrangler secret put RESEND_API_KEY --config .wrangler.deploy.toml
 npx wrangler secret put LLM_API_KEY --config .wrangler.deploy.toml
