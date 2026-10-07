@@ -33,6 +33,10 @@ export function validateReplyResult(input: unknown): ReplyResult {
   return value as unknown as ReplyResult;
 }
 export function createGenerator(config: Config, apiKey: string, beforeCall: () => Promise<void>) {
+  // Luna supports sampling at effort none; use its current completion-token parameter.
+  const tokenOptions = config.llmModel === 'gpt-6-luna'
+    ? { max_completion_tokens: 600, reasoning_effort: 'none' }
+    : { max_tokens: 600 };
   return async function generateReplies(post: Tweet): Promise<ReplyResult> {
     const messages: {role: string; content: string}[] = [
       { role: 'system', content: SYSTEM_PROMPT },
@@ -42,7 +46,7 @@ export function createGenerator(config: Config, apiKey: string, beforeCall: () =
       await beforeCall();
       const response = await externalFetch(`${config.llmBaseUrl}/chat/completions`, {
         method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: config.llmModel, temperature: 0.6, max_tokens: 600,
+        body: JSON.stringify({ model: config.llmModel, temperature: 0.6, ...tokenOptions,
           response_format: { type: 'json_object' }, messages }),
       }, 'llm');
       if (!response.ok) throw new RadarError(`llm_http_${response.status}`);

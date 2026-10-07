@@ -100,7 +100,7 @@ npx wrangler deploy --config .wrangler.deploy.toml --var X_REPLY_RADAR_ENABLED:t
 gh workflow run cloudflare.yml --repo demenciel/x-reply-radar --ref main
 ```
 
-Active hours are already configured as 07:00–23:00 America/Moncton, with a two-minute effective poll interval and model `gpt-luna-6`. A first successful poll establishes a baseline; it does not send historical alerts. The CI deploy preserves runtime settings and Worker secrets.
+Active hours are already configured as 07:00–23:00 America/Moncton, with a two-minute effective poll interval and model `gpt-6-luna`. A first successful poll establishes a baseline; it does not send historical alerts. The CI deploy preserves runtime settings and Worker secrets.
 
 ## Automatic GitHub → Cloudflare deployments
 
@@ -130,7 +130,7 @@ The API token must be entered privately in GitHub Secrets. The local Wrangler OA
 
 `npm run prepare:deploy` produces an ignored `.wrangler.deploy.toml` beside the source config. It injects the production database UUID, preserves `keep_vars = true`, and omits `[vars]` from the CI upload. This matters because explicitly uploaded variable values can override dashboard values even with `keep_vars` enabled. The original `wrangler.toml` stays unchanged for local development and manual initial setup.
 
-As a result, code, bindings, migrations, cron and other Wrangler deployment settings reflect the repository. Watched accounts, operating hours, enabled/paused state, polling interval, model/provider settings and secrets retain their Cloudflare values across CI deployments. To change those runtime settings, use **Workers & Pages → x-reply-radar → Settings → Variables and Secrets**. If you change `LLM_MODEL` there, that value takes priority over the `gpt-luna-6` application fallback.
+As a result, code, bindings, migrations, cron and other Wrangler deployment settings reflect the repository. Watched accounts, operating hours, enabled/paused state, polling interval, model/provider settings and secrets retain their Cloudflare values across CI deployments. To change those runtime settings, use **Workers & Pages → x-reply-radar → Settings → Variables and Secrets**. If you change `LLM_MODEL` there, that value takes priority over the `gpt-6-luna` application fallback.
 
 On the first **CI** deployment, set the runtime variables in Cloudflare, especially WATCHED_ACCOUNTS. Without that variable the application defaults to an empty list and performs no provider calls. Set X_REPLY_RADAR_ENABLED=false while entering the required API keys and email configuration, then test `/test/tweet`, inspect `/status`, and enable polling. The initial defaults table below is supplied by a manual deployment using `wrangler.toml`; CI deliberately leaves runtime-variable ownership with Cloudflare.
 
@@ -164,11 +164,11 @@ Set `LLM_API_KEY` as a secret, and `LLM_BASE_URL` / `LLM_MODEL` as normal variab
 
 | Provider | LLM_BASE_URL | LLM_MODEL |
 |---|---|---|
-| OpenAI (initial default) | `https://api.openai.com/v1` | `gpt-luna-6` |
+| OpenAI (initial default) | `https://api.openai.com/v1` | `gpt-6-luna` |
 | xAI | `https://api.x.ai/v1` | A currently available chat model on your account |
 | OpenRouter | `https://openrouter.ai/api/v1` | Your chosen provider/model slug |
 
-The model must support Chat Completions with `response_format: {"type":"json_object"}`, temperature and `max_tokens`. Compatibility varies by model; choose one that supports these parameters. Switching the three provider settings does not require a source change. Fit and replies are generated together, so skipped posts never incur a separate drafting call. Strict local validation checks schema, distinct drafts, length, sentence capitalization, emoji, hashtags, generic praise and common invented experience claims; nuanced voice and factual accuracy still require your final review. Edit `prompt.ts` if you intentionally change your voice.
+The model must support Chat Completions with `response_format: {"type":"json_object"}`. For [GPT-6 Luna](https://developers.openai.com/api/docs/models/gpt-6-luna), requests use `max_completion_tokens: 600`, `reasoning_effort: "none"` and temperature 0.6 for this short drafting task. Other provider/model settings use temperature 0.6 and `max_tokens: 600`; choose a model supporting those parameters. Switching the three provider settings does not require a source change. Fit and replies are generated together, so skipped posts never incur a separate drafting call. Strict local validation checks schema, distinct drafts, length, sentence capitalization, emoji, hashtags, generic praise and common invented experience claims; nuanced voice and factual accuracy still require your final review. Edit `prompt.ts` if you intentionally change your voice.
 
 ## Change runtime behavior in Cloudflare
 
@@ -191,7 +191,7 @@ The GitHub workflow preserves dashboard-configured variables by combining `keep_
 | WATCHED_ACCOUNTS | `["levelsio"]` | JSON string array; maximum 20 entries; usernames with optional @ |
 | SEND_SKIP_EMAILS | `false` | Optional informational mail with no drafts for skipped posts |
 | LLM_BASE_URL | `https://api.openai.com/v1` | HTTPS OpenAI-compatible API prefix |
-| LLM_MODEL | `gpt-luna-6` | Model name supported by your provider |
+| LLM_MODEL | `gpt-6-luna` | Model name supported by your provider |
 | MAX_TWEETS_PER_POLL | `5` | Integer 1–20; includes persisted retries |
 | MAX_SEARCH_PAGES_PER_POLL | `3` | Integer 1–5; ordinarily only one page needed |
 | MAX_DAILY_TWITTER_CALLS | `1000` | Integer 1–10000 |
@@ -328,7 +328,7 @@ Normal operation makes zero Twitter, LLM or email requests on disabled, inactive
 | Missing DB table / zero placeholder ID | Apply migrations to the right local/remote database and replace database_id |
 | Twitter HTTP 401/403/429 | Verify key, credit balance and provider limits; no automatic per-user request storm occurs |
 | Missing watched posts | Confirm public username, original/quote rather than reply/repost, account baseline, one-hour lookback, provider indexing and cursor backlog |
-| LLM HTTP 400 | Confirm model supports JSON-object mode, temperature and max_tokens; base URL excludes /chat/completions |
+| LLM HTTP 400 | Confirm model supports JSON-object mode and the documented request parameters above; base URL excludes /chat/completions |
 | `llm_invalid_after_repair` | Provider twice violated strict output/voice; inspect provider behavior privately; next eligible retry is bounded |
 | Resend error | Verify domain, sender, key and allowed recipient; check Resend dashboard |
 | `uncertain` | Check Resend dashboard before any human action; do not delete state or issue a new key to blindly resend |

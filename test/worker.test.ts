@@ -21,7 +21,14 @@ function mockServices(tweets: unknown[] = [], modelResult: unknown = replies) {
     new Request(input, init);
     const url = String(input);
     if (url.startsWith('https://api.twitterapi.io/')) return page(tweets);
-    if (url.endsWith('/chat/completions')) return Response.json({ choices: [{ message: { content: JSON.stringify(modelResult) } }] });
+    if (url.endsWith('/chat/completions')) {
+      const body = JSON.parse(String(init?.body));
+      if (body.model === 'gpt-6-luna' && (body.max_completion_tokens !== 600 || body.max_tokens !== undefined
+        || (body.temperature !== undefined && body.reasoning_effort !== 'none'))) {
+        return Response.json({ error: { code: 'unsupported_parameter' } }, { status: 400 });
+      }
+      return Response.json({ choices: [{ message: { content: JSON.stringify(modelResult) } }] });
+    }
     if (url === 'https://api.resend.com/emails') return Response.json({ id: 'mail-1' });
     throw new Error(`Unexpected request ${url}`);
   });

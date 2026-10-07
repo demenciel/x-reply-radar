@@ -35,7 +35,7 @@ export function parseConfig(env: Env) {
   try { base = new URL(env.LLM_BASE_URL ?? 'https://api.openai.com/v1'); }
   catch { throw new ConfigError('LLM_BASE_URL'); }
   if (base.protocol !== 'https:' || base.username || base.password || base.search || base.hash) throw new ConfigError('LLM_BASE_URL');
-  const model = env.LLM_MODEL ?? 'gpt-luna-6';
+  const model = env.LLM_MODEL ?? 'gpt-6-luna';
   if (!model.trim() || model.length > 150 || /[\r\n]/.test(model)) throw new ConfigError('LLM_MODEL');
   const start = time(env.ACTIVE_HOURS_START, '07:00', 'ACTIVE_HOURS_START');
   const end = time(env.ACTIVE_HOURS_END, '23:00', 'ACTIVE_HOURS_END');

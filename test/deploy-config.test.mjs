@@ -22,7 +22,7 @@ test('uses the production database while preserving source, cron and runtime-var
   assert.match(output, /crons = \["\* \* \* \* \*"\]/);
   assert.match(output, /migrations_dir = "migrations"/);
   assert.doesNotMatch(output, /\[vars\]|X_REPLY_RADAR_ENABLED|WATCHED_ACCOUNTS|LLM_MODEL/);
-  assert.match(source, /LLM_MODEL = "gpt-luna-6"/);
+  assert.match(source, /LLM_MODEL = "gpt-6-luna"/);
 });
 test('retains subsequent TOML sections after removing only the vars table', () => {
   const output = deploymentConfig(`${source}\n[limits]\ncpu_ms = 30000\n`, id);
