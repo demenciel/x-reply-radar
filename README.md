@@ -59,9 +59,9 @@ The lockfile pins the verified development toolchain; use `npm ci` for subsequen
 
 ## Finish the existing deployment
 
-The Worker is uploaded at `https://x-reply-radar.alexcouture97.workers.dev`, D1 migrations are applied, and both GitHub's account-ID secret and database-ID variable are configured. ADMIN_TOKEN is configured in Cloudflare; its private local copy is in the ignored `.dev.vars` file with permissions 0600. Live checks verified authenticated `/health` and `/status`, unauthorized rejection, and `/poll` returning `disabled` without provider calls. The Worker is paused with an empty watched-account list while provider credentials are missing.
+The Worker is deployed at `https://x-reply-radar.alexcouture97.workers.dev` with its one-minute cron attached, D1 migrations are applied, and both GitHub's account-ID secret and database-ID variable are configured. ADMIN_TOKEN is configured in Cloudflare; its private local copy is in the ignored `.dev.vars` file with permissions 0600. Live checks verified authenticated `/health` and `/status`, unauthorized rejection, and `/poll` returning `disabled` without provider calls. The Worker is paused with an empty watched-account list while provider credentials are missing.
 
-Cloudflare currently blocks adding the one-minute cron because this account has five cron triggers already. Free an unused cron slot under **Workers & Pages → existing Worker → Settings → Triggers → Cron Triggers → ⋯ → Delete**, or raise the account limit. Removing a cron stops that Worker's scheduled runs. The deployment command below will attach x-reply-radar's cron once capacity is available; until then manual endpoints work but automatic polling does not.
+If a future deployment hits the account's cron-trigger limit, free an unused cron slot under **Workers & Pages → existing Worker → Settings → Triggers → Cron Triggers → ⋯ → Delete**, or raise the account limit. Removing a cron stops that Worker's scheduled runs. The current deployment successfully attached x-reply-radar's cron after a slot was freed.
 
 Run from the project directory. Each secret command prompts privately; do not put literal keys in shell commands or paste them into chat.
 
@@ -77,7 +77,7 @@ gh secret set CLOUDFLARE_API_TOKEN --repo demenciel/x-reply-radar
 
 EMAIL_FROM must use a verified Resend sending domain; EMAIL_TO is your recipient address. For the GitHub secret, create a Cloudflare API token scoped to this account with **Workers Editor** on x-reply-radar and **D1 Edit** for its database. GitHub's permanent CI token is separate from local Wrangler OAuth credentials. Existing account/database IDs and ADMIN_TOKEN need no additional setup.
 
-Configure your actual hand-picked accounts and attach the cron, keeping polling paused for a test:
+Configure your actual hand-picked accounts, keeping polling paused for a test:
 
 ```sh
 # Replace these example usernames with your watched accounts.
