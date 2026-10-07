@@ -1,0 +1,35 @@
+name = "x-reply-radar"
+main = "src/index.ts"
+compatibility_date = "2026-10-07"
+
+# Preserve Dashboard variable edits on subsequent Wrangler deployments.
+keep_vars = true
+
+[triggers]
+crons = ["* * * * *"]
+
+[observability]
+enabled = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "x-reply-radar"
+database_id = "00000000-0000-0000-0000-000000000000" # Replace after d1 create.
+migrations_dir = "migrations"
+
+[vars]
+X_REPLY_RADAR_ENABLED = "true"
+ACTIVE_HOURS_ENABLED = "true"
+ACTIVE_HOURS_START = "07:00"
+ACTIVE_HOURS_END = "23:00"
+ACTIVE_TIMEZONE = "America/Moncton"
+POLL_INTERVAL_MINUTES = "2"
+SEND_SKIP_EMAILS = "false"
+WATCHED_ACCOUNTS = '["levelsio"]' # Replace with your hand-picked usernames.
+LLM_BASE_URL = "https://api.openai.com/v1"
+LLM_MODEL = "gpt-luna-6"
+MAX_TWEETS_PER_POLL = "5"
+MAX_SEARCH_PAGES_PER_POLL = "3"
+MAX_DAILY_TWITTER_CALLS = "1000"
+MAX_DAILY_LLM_CALLS = "100"
+MAX_DAILY_EMAILS = "50"
