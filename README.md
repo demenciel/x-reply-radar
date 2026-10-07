@@ -21,6 +21,8 @@ Direct `fetch()` calls, TypeScript, no runtime npm dependencies, SDKs, dashboard
 
 ## Quick setup and deployment
 
+This repository's database and Worker are already provisioned. Use **Finish the existing deployment** below for the remaining credentials and activation; the quick setup commands in this section are for a fresh installation.
+
 Prerequisites: Node.js 22.12 or newer, a Cloudflare account with Workers and D1, a TwitterAPI.io key, a Resend key and verified sending domain, and an OpenAI-compatible model key.
 
 From the project directory:
@@ -55,6 +57,51 @@ Wrangler prints your URL, for example `https://x-reply-radar.YOUR-SUBDOMAIN.work
 
 The lockfile pins the verified development toolchain; use `npm ci` for subsequent installs. `.npmrc` avoids an npm 11 optional-peer resolver crash. The `sharp` override pins the patched image library used internally by local Cloudflare tooling; it is not bundled in the Worker.
 
+## Finish the existing deployment
+
+The Worker is uploaded at `https://x-reply-radar.alexcouture97.workers.dev`, D1 migrations are applied, and both GitHub's account-ID secret and database-ID variable are configured. ADMIN_TOKEN is configured in Cloudflare; its private local copy is in the ignored `.dev.vars` file with permissions 0600. Live checks verified authenticated `/health` and `/status`, unauthorized rejection, and `/poll` returning `disabled` without provider calls. The Worker is paused with an empty watched-account list while provider credentials are missing.
+
+Cloudflare currently blocks adding the one-minute cron because this account has five cron triggers already. Free an unused cron slot under **Workers & Pages → existing Worker → Settings → Triggers → Cron Triggers → ⋯ → Delete**, or raise the account limit. Removing a cron stops that Worker's scheduled runs. The deployment command below will attach x-reply-radar's cron once capacity is available; until then manual endpoints work but automatic polling does not.
+
+Run from the project directory. Each secret command prompts privately; do not put literal keys in shell commands or paste them into chat.
+
+```sh
+npm run prepare:deploy
+npx wrangler secret put TWITTERAPI_IO_KEY --config .wrangler.deploy.toml
+npx wrangler secret put RESEND_API_KEY --config .wrangler.deploy.toml
+npx wrangler secret put LLM_API_KEY --config .wrangler.deploy.toml
+npx wrangler secret put EMAIL_FROM --config .wrangler.deploy.toml
+npx wrangler secret put EMAIL_TO --config .wrangler.deploy.toml
+gh secret set CLOUDFLARE_API_TOKEN --repo demenciel/x-reply-radar
+```
+
+EMAIL_FROM must use a verified Resend sending domain; EMAIL_TO is your recipient address. For the GitHub secret, create a Cloudflare API token scoped to this account with **Workers Editor** on x-reply-radar and **D1 Edit** for its database. GitHub's permanent CI token is separate from local Wrangler OAuth credentials. Existing account/database IDs and ADMIN_TOKEN need no additional setup.
+
+Configure your actual hand-picked accounts and attach the cron, keeping polling paused for a test:
+
+```sh
+# Replace these example usernames with your watched accounts.
+RADAR_ACCOUNTS='["levelsio","another_builder"]'
+npx wrangler deploy --config .wrangler.deploy.toml \
+  --var "WATCHED_ACCOUNTS:$RADAR_ACCOUNTS" \
+  --var X_REPLY_RADAR_ENABLED:false
+
+# This file contains the private admin token created during setup.
+source .dev.vars
+RADAR_URL='https://x-reply-radar.alexcouture97.workers.dev'
+curl -sS "$RADAR_URL/health" -H "Authorization: Bearer $ADMIN_TOKEN"
+curl -sS "$RADAR_URL/status" -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+Use the `/test/tweet` example below with your actual numeric tweet ID and original text to verify generation and one email while still paused. Then enable polling and verify the GitHub deployment workflow:
+
+```sh
+npx wrangler deploy --config .wrangler.deploy.toml --var X_REPLY_RADAR_ENABLED:true
+gh workflow run cloudflare.yml --repo demenciel/x-reply-radar --ref main
+```
+
+Active hours are already configured as 07:00–23:00 America/Moncton, with a two-minute effective poll interval and model `gpt-luna-6`. A first successful poll establishes a baseline; it does not send historical alerts. The CI deploy preserves runtime settings and Worker secrets.
+
 ## Automatic GitHub → Cloudflare deployments
 
 [The deployment workflow](.github/workflows/cloudflare.yml) runs typecheck, all tests and a deployment dry run on pull requests and pushes to `main`. After checks pass, a push to `main` applies pending D1 migrations and deploys that exact commit, including the one-minute cron. Pull requests run checks only. You can also run it manually under **GitHub → Actions → Check and deploy Cloudflare Worker → Run workflow**, selecting `main`.
@@ -75,7 +122,7 @@ In [GitHub Settings → Secrets and variables → Actions](https://github.com/de
 
 Create a dedicated database with `npx wrangler d1 create x-reply-radar`, then save its UUID as `CLOUDFLARE_D1_DATABASE_ID`. The repository variable overrides `database_id` for CI; local development continues to use the source configuration. Alternatively, commit a real database ID in `wrangler.toml` and omit the repository variable. Missing credentials or a placeholder/invalid database ID stop deployment with a clear error before any migration or upload.
 
-**Current activation prerequisite:** Cloudflare refused creation because this account has reached its D1 database limit. Make a database slot available or raise the account limit, create the dedicated database, and save its UUID. The workflow does not delete or repurpose other applications' databases.
+The dedicated x-reply-radar database is provisioned with UUID `fabc7d2b-32ca-40f1-b535-54e471666408`, and its GitHub repository variable is configured. If you deploy this project to another Cloudflare account, create a dedicated database there and update the binding and repository variable. The workflow does not delete or repurpose other applications' databases.
 
 The API token must be entered privately in GitHub Secrets. The local Wrangler OAuth login cannot be used as a permanent CI token. The Worker API keys and ADMIN_TOKEN remain **Cloudflare Worker secrets**, configured with the existing `wrangler secret put` commands or the Cloudflare dashboard; they do not need to be copied to GitHub.
 

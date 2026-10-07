@@ -14,7 +14,7 @@ enabled = true
 [[d1_databases]]
 binding = "DB"
 database_name = "x-reply-radar"
-database_id = "00000000-0000-0000-0000-000000000000" # Replace after d1 create.
+database_id = "fabc7d2b-32ca-40f1-b535-54e471666408"
 migrations_dir = "migrations"
 
 [vars]
