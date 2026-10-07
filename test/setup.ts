@@ -11,6 +11,7 @@ declare global {
 beforeAll(async () => { await applyD1Migrations(env.DB, env.TEST_MIGRATIONS); });
 beforeEach(async () => {
   await env.DB.batch([
+    env.DB.prepare('DELETE FROM app_settings'),
     env.DB.prepare('DELETE FROM tweets'), env.DB.prepare('DELETE FROM email_receipts'), env.DB.prepare('DELETE FROM counters'),
     env.DB.prepare("UPDATE radar_state SET value='{}' WHERE id=1"),
     env.DB.prepare("UPDATE lease SET owner='',expires_at=0 WHERE id=1"),

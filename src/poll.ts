@@ -4,6 +4,8 @@ import { Store } from './store';
 import { buildSearchQuery, searchTweets } from './twitter';
 import { processTweet } from './pipeline';
 import type { Env, RadarState, Scan } from './types';
+import { loadRuntimeEnv } from './settings';
+import { dailyPauseReason } from './budget';
 
 const HOUR = 3_600_000;
 const OVERLAP = 5 * 60_000;
@@ -12,7 +14,9 @@ function due(state: RadarState, config: Config, now: number): boolean {
 }
 export async function poll(env: Env, force = false): Promise<{status: string; processed?: number}> {
   const started = Date.now();
-  // Disabled cron invocations only parse one boolean and write one log. No database access.
+  env = await loadRuntimeEnv(env);
+  if (!bool(env.ALL_OPS_ENABLED, true, 'ALL_OPS_ENABLED')) return { status: 'all_operations_disabled' };
+  // Read settings once so dashboard pause/resume applies on the next invocation. No writes or paid calls while paused.
   if (!bool(env.X_REPLY_RADAR_ENABLED, true, 'X_REPLY_RADAR_ENABLED') && !force) {
     log('radar_disabled', { stage: 'gate', success: true }); return { status: 'disabled' };
   }
@@ -21,6 +25,7 @@ export async function poll(env: Env, force = false): Promise<{status: string; pr
     log('outside_active_hours', { stage: 'gate', success: true }); return { status: 'inactive' };
   }
   const store = new Store(env.DB);
+  if (dailyPauseReason(config, await store.counters())) return { status: 'daily_limit_paused' };
   if (!due(await store.state(), config, started)) return { status: 'interval_not_elapsed' };
   if (!await store.acquire()) return { status: 'locked' };
   try {
@@ -29,6 +34,7 @@ export async function poll(env: Env, force = false): Promise<{status: string; pr
     // Recheck after acquiring the lock: another invocation may have completed while we waited.
     if (!due(state, config, now)) return { status: 'interval_not_elapsed' };
     if (!currentlyActive(config, now)) return { status: 'inactive' };
+    if (dailyPauseReason(config, await store.counters())) return { status: 'daily_limit_paused' };
     state.lastAttemptPollAt = now;
     await store.saveState(state);
     await store.cleanup();
@@ -43,7 +49,7 @@ export async function poll(env: Env, force = false): Promise<{status: string; pr
     if (state.watermark && state.watermark < now - HOUR) log('poll_gap_clamped', { stage: 'discovery', success: true });
     const pages = firstPoll ? 1 : config.maxPages;
     for (let page = 0; page < pages; page++) {
-      await store.reserve('twitter_calls', config.dailyTwitter);
+      await store.reserve('twitter_calls', config.dailyTwitter, config);
       const response = await searchTweets(apiKey, buildSearchQuery(config.accounts, scan.since, scan.until), scan.cursor);
       for (const tweet of response.tweets) {
         if (!Object.hasOwn(accounts, tweet.username) || tweet.isReply || tweet.isRetweet) continue;
@@ -75,6 +81,8 @@ export async function poll(env: Env, force = false): Promise<{status: string; pr
     });
     return { status: firstPoll ? 'baseline_initialized' : 'polled', processed: pending.length };
   } catch (error) {
+    if (errorCode(error) === 'all_operations_disabled') return { status: 'all_operations_disabled' };
+    if (errorCode(error).startsWith('daily_limit_')) return { status: 'daily_limit_paused' };
     log('poll_failed', { stage: 'poll', code: errorCode(error), durationMs: Date.now() - started, success: false });
     throw error;
   } finally { await store.release(); }

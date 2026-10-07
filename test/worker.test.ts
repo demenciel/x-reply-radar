@@ -6,7 +6,7 @@ import { Store, SEND_RETRY_WINDOW_MS } from '../src/store';
 import { normalizeTweet } from '../src/twitter';
 import type { Env } from '../src/types';
 
-const config = (): Env => ({ ...env, ACTIVE_HOURS_ENABLED: 'false', ADMIN_TOKEN: 'test-token-12345678901234567890123456789',
+const config = (): Env => ({ ...env, ACTIVE_HOURS_ENABLED: 'false', PAUSE_AT_DAILY_LIMITS: 'false', ADMIN_TOKEN: 'test-token-12345678901234567890123456789',
   TWITTERAPI_IO_KEY: 'twitter-test', LLM_API_KEY: 'llm-test', RESEND_API_KEY: 'email-test',
   EMAIL_FROM: 'Radar <radar@example.com>', EMAIL_TO: 'me@example.com', WATCHED_ACCOUNTS: '["builder"]' });
 const replies = { fit: 'high', reason: 'Product building', funny: 'The backlog has acquired a backlog.',
@@ -50,16 +50,17 @@ async function manual(id: string, patch: Partial<Env> = {}, text = 'AI software 
 }
 
 describe('gates and authentication', () => {
-  it('disabled cron exits without touching DB or external services, even if other config is invalid', async () => {
+  it('disabled cron reads settings but makes no writes or external requests, even if other config is invalid', async () => {
     const fetch = mockServices();
-    expect(await poll({ ...config(), DB: undefined as unknown as D1Database, X_REPLY_RADAR_ENABLED: 'false', POLL_INTERVAL_MINUTES: 'bad' }))
+    expect(await poll({ ...config(), X_REPLY_RADAR_ENABLED: 'false', POLL_INTERVAL_MINUTES: 'bad' }))
       .toEqual({ status: 'disabled' });
     expect(fetch).not.toHaveBeenCalled();
+    expect(await new Store(env.DB).state()).toEqual({});
   });
-  it('inactive hours exit before DB and APIs', async () => {
+  it('inactive hours exit before polling writes and APIs', async () => {
     const fetch = mockServices();
     vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-07-07T05:00:00Z'));
-    expect(await poll({ ...config(), DB: undefined as unknown as D1Database, ACTIVE_HOURS_ENABLED: 'true' })).toEqual({ status: 'inactive' });
+    expect(await poll({ ...config(), ACTIVE_HOURS_ENABLED: 'true' })).toEqual({ status: 'inactive' });
     expect(fetch).not.toHaveBeenCalled();
   });
   it('invalid intervals fail closed with no paid calls', async () => {
@@ -256,7 +257,7 @@ describe('pipeline durability and costs', () => {
     const fetch = mockServices();
     await poll({ ...config(), MAX_DAILY_TWITTER_CALLS: '1' });
     await env.DB.prepare("UPDATE radar_state SET value=json_set(value,'$.lastSuccessfulPollAt',0,'$.lastAttemptPollAt',0)").run();
-    await expect(poll({ ...config(), MAX_DAILY_TWITTER_CALLS: '1' })).rejects.toThrow('daily_limit_twitter_calls');
+    expect((await poll({ ...config(), MAX_DAILY_TWITTER_CALLS: '1' })).status).toBe('daily_limit_paused');
     expect(fetch).toHaveBeenCalledTimes(1);
   });
   it('caps email send attempts without regenerating saved replies', async () => {

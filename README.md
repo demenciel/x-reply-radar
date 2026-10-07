@@ -6,7 +6,7 @@ A tiny Cloudflare Worker for Alexworks (@technoSaas). It watches up to 20 hand-p
 
 ```text
 Cloudflare cron, every minute
-  → enabled? → active hours? → interval elapsed?
+  → read saved settings → enabled? → active hours? → interval elapsed?
   → atomic D1 lease
   → one TwitterAPI.io multi-author search (bounded pagination)
   → timestamp baseline + tweet-ID deduplication → durable pending tweets
@@ -15,9 +15,31 @@ Cloudflare cron, every minute
   → record accepted email and counter
 ```
 
-Direct `fetch()` calls, TypeScript, no runtime npm dependencies, SDKs, dashboard or frontend. The OpenAI-compatible provider adapter is confined to `generator.ts`. All normal runtime settings are parsed once into a typed object in `config.ts`; keys are accessed only at the relevant integration boundary.
+Direct `fetch()` calls, TypeScript, no runtime npm dependencies or SDKs. A framework-free dashboard is bundled into the same Worker; it needs no asset service or CDN. The OpenAI-compatible provider adapter is confined to `generator.ts`. Saved D1 settings override Cloudflare variable defaults and are parsed into a typed object in `config.ts`; keys are accessed only at the relevant integration boundary.
 
 **Why D1 instead of KV:** reliable overlapping cron/manual execution requires atomic acquisition and fenced writes. [Workers KV is eventually consistent](https://developers.cloudflare.com/kv/concepts/how-kv-works/), so a KV read/write lock cannot provide that protection. D1 is materially better here: one small database stores state, retry records, deduplication and counters. No second storage service is needed. [D1 batches are transactional](https://developers.cloudflare.com/d1/worker-api/d1-database/).
+
+## Settings dashboard
+
+Open [Reply Radar dashboard](https://x-reply-radar.alexcouture97.workers.dev/dashboard). The root URL redirects there. Sign in with your existing Cloudflare account; the Access policy is restricted to the owner email. The page manages pause/resume, watched accounts, polling interval, active hours/timezone, LLM model and API URL, owner context, reply prompt, email sender/recipient, skip emails, daily caps and processing limits. The master **Stop all operations** button immediately saves an operations stop without changing other saved preferences; no cron, forced poll or manual test can bypass it. Turn on **Allow all operations** and save to resume. Already-admitted provider requests can finish and record their result; later call reservations check the stored stop flag even inside a running poll. It also displays counters and the six most recent processed posts.
+
+Use **Save changes** to persist settings. The first save creates a D1 snapshot from the current production configuration; later saves update that snapshot atomically. Saved values take priority over environment variables, including email addresses, and survive deployment. Changes affect the next invocation; work already running retains its starting settings. A stale browser revision gets a conflict instead of overwriting another edit. **Refresh activity** reloads settings when resolving a conflict; ordinarily it updates activity without discarding your form edits.
+
+API keys and the admin token remain Cloudflare secrets and are never returned by the dashboard. Email addresses are editable settings, visible only after Access login. Changing the provider URL sends your existing LLM key to that provider, so use a provider you trust and replace LLM_API_KEY when changing providers. The prompt editor controls voice and relevance; an appended contract and local validation retain the required three-draft JSON format and reply rules.
+
+### Token usage and automatic call cutoff
+
+The meter records input, output, total and cached input tokens reported by the LLM provider, including malformed replies and repair calls. Counts reset at midnight UTC. It shows how many reserved LLM calls have reported usage: older calls, errors without usage and requests interrupted before recording are not estimated or backfilled. Output tokens include any reasoning tokens counted by the provider in completion usage. Metered tokens are usage, not an exact dollar bill; switching models or providers changes rates.
+
+**Pause at daily call limits** is on by default. Reaching any configured X API, LLM or email-attempt cap pauses all further provider calls, including forced polls and manual tests, until midnight UTC. Reservations enforce the cap atomically before requests, so calls cannot exceed it through concurrent invocations. Calls that fail still consume a reservation; unfinished generation/email work remains queued and existing retry/retention rules apply. This pause does not change the master switch or your monitoring preference. Increasing the reached limit or turning off automatic global pause permits subsequent work; each service's own daily cap is still enforced. **Stop all operations** stays stopped until you explicitly resume it.
+
+### Cloudflare Access setup for a new installation
+
+In **Cloudflare One → Access controls → Applications**, create a **Self-hosted and private** application named Reply Radar dashboard. Add the public hostname `x-reply-radar.YOUR-SUBDOMAIN.workers.dev/dashboard` (the path covers its API children). Attach a dedicated Allow policy with **Include: Emails = your owner email** and **Require: Login Methods = Cloudflare**. Do not combine email and login method as two Include rules: those are OR rules. Keep existing API endpoints outside this path. Authentication can use your already configured Cloudflare identity provider; no additional password or API secret is needed.
+
+The Worker uses [Cloudflare-attested `ctx.access`](https://developers.cloudflare.com/workers/configuration/cloudflare-access/), requires a human email identity and refuses dashboard requests without it. It does not trust client-supplied Access headers or allow bearer-token dashboard login. Optionally set normal variable `ACCESS_AUD` to this application's audience tag to pin it to that Access application. The HTML is served by the Worker itself, since static-assets routing does not forward the native Access context. Browser writes also require a same-origin Origin header, JSON MIME type and custom request header; responses have no-store caching, nonce-based CSP and frame protection.
+
+For a local UI preview, copy `wrangler.toml` to an ignored local config, add `[access.dev]` with `aud = "radar-local"` and `[access.dev.identity]` with `email = "local@example.com"`, apply local D1 migrations, and run Wrangler dev with that config. Access simulation applies only in local development; it is not a production bypass.
 
 ## Quick setup and deployment
 
@@ -131,7 +153,7 @@ The API token must be entered privately in GitHub Secrets. The local Wrangler OA
 
 `npm run prepare:deploy` produces an ignored `.wrangler.deploy.toml` beside the source config. It injects the production database UUID, preserves `keep_vars = true`, and omits `[vars]` from the CI upload. This matters because explicitly uploaded variable values can override dashboard values even with `keep_vars` enabled. The original `wrangler.toml` stays unchanged for local development and manual initial setup.
 
-As a result, code, bindings, migrations, cron and other Wrangler deployment settings reflect the repository. Watched accounts, operating hours, enabled/paused state, polling interval, model/provider settings and secrets retain their Cloudflare values across CI deployments. To change those runtime settings, use **Workers & Pages → x-reply-radar → Settings → Variables and Secrets**. If you change `LLM_MODEL` there, that value takes priority over the `gpt-6-luna` application fallback.
+As a result, code, bindings, migrations, cron and other Wrangler deployment settings reflect the repository. Watched accounts, operating hours, enabled/paused state, polling interval, model/provider settings and secrets retain their Cloudflare values across CI deployments. Use the app dashboard to change runtime settings. Before its first save, **Workers & Pages → x-reply-radar → Settings → Variables and Secrets** supplies the defaults. After the first save, the D1 settings snapshot takes priority over those variables. Secrets remain managed in Cloudflare.
 
 On the first **CI** deployment, set the runtime variables in Cloudflare, especially WATCHED_ACCOUNTS. Without that variable the application defaults to an empty list and performs no provider calls. Set X_REPLY_RADAR_ENABLED=false while entering the required API keys and email configuration, then test `/test/tweet`, inspect `/status`, and enable polling. The initial defaults table below is supplied by a manual deployment using `wrangler.toml`; CI deliberately leaves runtime-variable ownership with Cloudflare.
 
@@ -169,11 +191,11 @@ Set `LLM_API_KEY` as a secret, and `LLM_BASE_URL` / `LLM_MODEL` as normal variab
 | xAI | `https://api.x.ai/v1` | A currently available chat model on your account |
 | OpenRouter | `https://openrouter.ai/api/v1` | Your chosen provider/model slug |
 
-The model must support Chat Completions with `response_format: {"type":"json_object"}`. For [GPT-6 Luna](https://developers.openai.com/api/docs/models/gpt-6-luna), requests use `max_completion_tokens: 600`, `reasoning_effort: "none"` and temperature 0.6 for this short drafting task. Other provider/model settings use temperature 0.6 and `max_tokens: 600`; choose a model supporting those parameters. Switching the three provider settings does not require a source change. Fit and replies are generated together, so skipped posts never incur a separate drafting call. Strict local validation checks schema, distinct drafts, length, sentence capitalization, emoji, hashtags, generic praise and common invented experience claims; nuanced voice and factual accuracy still require your final review. Edit `prompt.ts` if you intentionally change your voice.
+The model must support Chat Completions with `response_format: {"type":"json_object"}`. For [GPT-6 Luna](https://developers.openai.com/api/docs/models/gpt-6-luna), requests use `max_completion_tokens: 600`, `reasoning_effort: "none"` and temperature 0.6 for this short drafting task. GPT-6 Sol uses the same parameters. GPT-6.1 Sol and GPT-6 Astra use `reasoning_effort: "low"`, `max_completion_tokens: 2048` and omit temperature. Custom provider/model identifiers use temperature 0.6 and `max_tokens: 600`; choose a model supporting those parameters. Switching the three provider settings does not require a source change. Fit and replies are generated together, so skipped posts never incur a separate drafting call. Strict local validation checks schema, distinct drafts, length, sentence capitalization, emoji, hashtags, generic praise and common invented experience claims; nuanced voice and factual accuracy still require your final review. Edit the reply prompt and owner context in the dashboard to change your voice.
 
 ## Change runtime behavior in Cloudflare
 
-Go to **Workers & Pages → x-reply-radar → Settings → Variables and Secrets**. Add/edit a normal **Variable** for each non-secret setting below, then save/apply the new configuration (use Deploy if the dashboard requests it). Changes apply to subsequent Worker invocations; an already-running invocation keeps its starting configuration. No application-code edit is required.
+Use the **Reply Radar dashboard** for ordinary settings changes. The variables below are defaults for a new installation until the first dashboard save. Saved D1 settings take priority thereafter; editing a variable alone will not change a saved setting. API keys and ADMIN_TOKEN remain managed in **Workers & Pages → x-reply-radar → Settings → Variables and Secrets**. Changes apply to subsequent Worker invocations; an already-running invocation keeps its starting configuration.
 
 Keep the real Cron Trigger at `* * * * *`. Runtime variables control effective polling, not the actual cron schedule. [Cloudflare cron configuration](https://developers.cloudflare.com/workers/configuration/cron-triggers/) is separate from variables. If the base cron runs every 5 minutes, an interval of 1 minute cannot make it poll faster than those invocations.
 
@@ -183,7 +205,9 @@ The GitHub workflow preserves dashboard-configured variables by combining `keep_
 
 | Variable | Default | Validation / purpose |
 |---|---|---|
-| X_REPLY_RADAR_ENABLED | `true` | Exactly `true` or `false` |
+| ALL_OPS_ENABLED | `true` | Master gate, including forced polls and manual tests |
+| X_REPLY_RADAR_ENABLED | `true` | Exactly `true` or `false`; scheduled monitoring only |
+| PAUSE_AT_DAILY_LIMITS | `true` | Pause all paid work when any service cap is reached; resets daily |
 | ACTIVE_HOURS_ENABLED | `true` | Exactly `true` or `false` |
 | ACTIVE_HOURS_START | `07:00` | Zero-padded 24-hour HH:MM; inclusive |
 | ACTIVE_HOURS_END | `23:00` | HH:MM; exclusive; must differ from start |
@@ -193,6 +217,9 @@ The GitHub workflow preserves dashboard-configured variables by combining `keep_
 | SEND_SKIP_EMAILS | `false` | Optional informational mail with no drafts for skipped posts |
 | LLM_BASE_URL | `https://api.openai.com/v1` | HTTPS OpenAI-compatible API prefix |
 | LLM_MODEL | `gpt-6-luna` | Model name supported by your provider |
+| LLM_CONTEXT | Empty | Optional owner background; dashboard limit 6,000 characters |
+| LLM_SYSTEM_PROMPT | Built-in prompt | Editable voice/relevance instructions; dashboard limit 18,000 characters |
+| ACCESS_AUD | Unset | Optional audience pin for the dashboard Access app |
 | MAX_TWEETS_PER_POLL | `5` | Integer 1–20; includes persisted retries |
 | MAX_SEARCH_PAGES_PER_POLL | `3` | Integer 1–5; ordinarily only one page needed |
 | MAX_DAILY_TWITTER_CALLS | `1000` | Integer 1–10000 |
@@ -224,11 +251,11 @@ Never put keys in normal Variables, `wrangler.toml`, source files, commands with
 | Paused | `false` | Either | Any valid window | America/Moncton | Any valid interval |
 | Overnight | `true` | `true` | `18:00`–`02:00` | America/Moncton | `2` |
 
-Disabled scheduled executions parse only the switch, emit one concise event, and do no database or external API work. Inactive executions validate config and check local time before any database/API access. Interval-skipped executions read state but make no paid API requests. The interval uses persisted `lastSuccessfulPollAt`, with a separate `lastAttemptPollAt` cooldown after failures; it never uses clock-minute modulo. Delayed invocations do not trigger catch-up polling bursts.
+Every scheduled invocation reads the singleton settings row once, allowing dashboard pause/resume to apply without redeploying. Disabled and inactive invocations make no D1 writes or external API requests. Interval-skipped executions read state but make no paid API requests. The interval uses persisted `lastSuccessfulPollAt`, with a separate `lastAttemptPollAt` cooldown after failures; it never uses clock-minute modulo. Delayed invocations do not trigger catch-up polling bursts.
 
 ## Add or remove accounts
 
-Before deployment, edit `WATCHED_ACCOUNTS` in `wrangler.toml`. Afterwards, change that **Variable** in the Cloudflare dashboard:
+Use **Monitoring → Accounts to follow** in the app dashboard to add or remove accounts. Before the first dashboard save, the Cloudflare `WATCHED_ACCOUNTS` variable supplies the initial list:
 
 ```json
 ["levelsio", "another_builder", "third_account"]
@@ -312,7 +339,7 @@ Approximate 30-day **empty-result search floors**, assuming one page per eligibl
 
 These are arithmetic estimates, not total bills. Returned tweets, overlap, pagination and retries increase costs; LLM tokens, Resend and Cloudflare usage are additional and depend on your plans. The default Twitter cap is 1,000/day, so **Aggressive needs MAX_DAILY_TWITTER_CALLS at least 1440**, preferably 2000 for pagination, to operate the full day. Choose caps deliberately; Twitter daily call count is not a dollar cap because each page can return multiple tweets.
 
-Counters reserve requests before calling providers, so they conservatively include attempted/failed calls and a reservation abandoned by a crash. UTC midnight resets budgets; timezone settings control operating hours only. LLM repair counts toward the LLM cap; email retries count toward MAX_DAILY_EMAILS. Budget exhaustion postpones the affected work until UTC midnight, subject to queue age and the email idempotency cutoff. Forced/manual calls cannot bypass caps.
+Counters reserve requests before calling providers, so they conservatively include attempted/failed calls and a reservation abandoned by a crash. UTC midnight resets budgets; timezone settings control operating hours only. LLM repair counts toward the LLM cap; email retries count toward MAX_DAILY_EMAILS. Budget exhaustion postpones the affected work until UTC midnight, subject to queue age and the email idempotency cutoff. Forced/manual calls cannot bypass caps or the master stop. With automatic global pause enabled, a reached cap blocks other providers too.
 
 Normal operation makes zero Twitter, LLM or email requests on disabled, inactive or interval-skipped cron invocations. Those cron invocations still count as Cloudflare Worker executions. Check your Cloudflare plan's Workers/D1 quotas; D1 has no per-minute writes while paused/inactive. Keep paid-provider spending limits in their dashboards where available.
 

@@ -1,8 +1,8 @@
-import type { ReplyResult, Tweet } from './types';
+import type { ReplyResult, TokenUsage, Tweet } from './types';
 import type { Config } from './config';
 import { RadarError } from './log';
 import { externalFetch, object, responseJson } from './http';
-import { SYSTEM_PROMPT } from './prompt';
+import { replyPrompt } from './prompt';
 
 export function validateReplyResult(input: unknown): ReplyResult {
   const value = object(input);
@@ -32,25 +32,38 @@ export function validateReplyResult(input: unknown): ReplyResult {
   }
   return value as unknown as ReplyResult;
 }
-export function createGenerator(config: Config, apiKey: string, beforeCall: () => Promise<void>) {
+export function createGenerator(config: Config, apiKey: string, beforeCall: () => Promise<void>, onUsage?: (usage: TokenUsage) => Promise<void>) {
   // Luna supports sampling at effort none; use its current completion-token parameter.
-  const tokenOptions = config.llmModel === 'gpt-6-luna'
-    ? { max_completion_tokens: 600, reasoning_effort: 'none' }
-    : { max_tokens: 600 };
+  const nonReasoning = /^gpt-6-(?:luna|sol)(?:-|$)/.test(config.llmModel);
+  const tokenOptions = nonReasoning ? { max_completion_tokens: 600, reasoning_effort: 'none', temperature: 0.6 }
+    : /^gpt-6(?:[.-]|$)/.test(config.llmModel) ? { max_completion_tokens: 2048, reasoning_effort: 'low' }
+    : { max_tokens: 600, temperature: 0.6 };
   return async function generateReplies(post: Tweet): Promise<ReplyResult> {
     const messages: {role: string; content: string}[] = [
-      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'system', content: replyPrompt(config.llmPrompt, config.llmContext) },
       { role: 'user', content: JSON.stringify({ author: post.username, post: post.text.slice(0, 12000) }) },
     ];
     for (let attempt = 0; attempt < 2; attempt++) {
       await beforeCall();
       const response = await externalFetch(`${config.llmBaseUrl}/chat/completions`, {
         method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: config.llmModel, temperature: 0.6, ...tokenOptions,
+        body: JSON.stringify({ model: config.llmModel, ...tokenOptions,
           response_format: { type: 'json_object' }, messages }),
       }, 'llm');
       if (!response.ok) throw new RadarError(`llm_http_${response.status}`);
       const body = object(await responseJson(response, 'llm'));
+      // Count provider-reported usage before validating drafts, including repair attempts.
+      if (body.usage && typeof body.usage === 'object') {
+        const usage = body.usage as Record<string, unknown>;
+        const input = usage.prompt_tokens, output = usage.completion_tokens;
+        if (typeof input === 'number' && typeof output === 'number' && Number.isSafeInteger(input) && Number.isSafeInteger(output)
+          && input >= 0 && output >= 0 && input <= 10_000_000 && output <= 10_000_000) {
+          const details = usage.prompt_tokens_details as { cached_tokens?: unknown } | undefined;
+          const cached = details?.cached_tokens;
+          await onUsage?.({ input, output, total: input + output,
+            cachedInput: typeof cached === 'number' && Number.isSafeInteger(cached) && cached >= 0 && cached <= input ? cached : 0 });
+        }
+      }
       const choices = body.choices;
       let content: string | undefined;
       if (Array.isArray(choices) && choices.length) {

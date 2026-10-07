@@ -1,4 +1,5 @@
-import type { Counters, RadarState, Tweet, TweetRow, TweetStatus } from './types';
+import type { Counters, RadarState, TokenUsage, Tweet, TweetRow, TweetStatus } from './types';
+import type { Config } from './config';
 import { RadarError } from './log';
 
 const LEASE_MS = 90_000;
@@ -73,13 +74,30 @@ export class Store {
       .bind(...entries.map(([, value]) => value), id, this.owner, Date.now()).run();
     if (result.meta.changes !== 1) throw new RadarError('lease_lost');
   }
-  async reserve(kind: 'twitter_calls' | 'llm_calls' | 'email_attempts', limit: number): Promise<void> {
+  async reserve(kind: 'twitter_calls' | 'llm_calls' | 'email_attempts', limit: number, config?: Config): Promise<string> {
+    if (config && !config.operationsEnabled) throw new RadarError('all_operations_disabled');
     await this.renew();
     const day = new Date().toISOString().slice(0, 10);
     await this.db.prepare('INSERT OR IGNORE INTO counters(day) VALUES (?)').bind(day).run();
+    const pause = config?.pauseAtDailyLimits;
+    const extra = pause ? ' AND twitter_calls<? AND llm_calls<? AND email_attempts<?' : '';
+    const values = pause ? [config.dailyTwitter, config.dailyLlm, config.dailyEmails] : [];
     const result = await this.db.prepare(`UPDATE counters SET ${kind}=${kind}+1
-      WHERE day=? AND ${kind}<? AND ${this.guard}`).bind(day, limit, this.owner, Date.now()).run();
-    if (result.meta.changes !== 1) throw new RadarError(`daily_limit_${kind}`);
+      WHERE day=? AND ${kind}<?${extra} AND ${this.guard}
+        AND NOT EXISTS (SELECT 1 FROM app_settings WHERE id=1 AND json_extract(value,'$.operationsEnabled')=0)`)
+      .bind(day, limit, ...values, this.owner, Date.now()).run();
+    if (result.meta.changes !== 1) {
+      const stopped = await this.db.prepare("SELECT id FROM app_settings WHERE id=1 AND json_extract(value,'$.operationsEnabled')=0").first();
+      if (stopped) throw new RadarError('all_operations_disabled');
+      throw new RadarError(`daily_limit_${kind}`);
+    }
+    return day;
+  }
+  async recordUsage(usage: TokenUsage, day: string): Promise<void> {
+    const result = await this.db.prepare(`UPDATE counters SET input_tokens=input_tokens+?,cached_input_tokens=cached_input_tokens+?,
+      output_tokens=output_tokens+?,total_tokens=total_tokens+?,usage_reports=usage_reports+1 WHERE day=? AND ${this.guard}`)
+      .bind(usage.input, usage.cachedInput, usage.output, usage.total, day, this.owner, Date.now()).run();
+    if (result.meta.changes !== 1) throw new RadarError('lease_lost');
   }
   async emailed(id: string, emailId: string): Promise<void> {
     const now = Date.now();
@@ -96,9 +114,10 @@ export class Store {
     if (results[0]?.meta.changes !== 1) throw new RadarError('lease_lost');
   }
   async counters(): Promise<Counters> {
-    return await this.db.prepare('SELECT twitter_calls,llm_calls,email_attempts,emails_sent FROM counters WHERE day=?')
+    return await this.db.prepare('SELECT * FROM counters WHERE day=?')
       .bind(new Date().toISOString().slice(0, 10)).first<Counters>()
-      ?? { twitter_calls: 0, llm_calls: 0, email_attempts: 0, emails_sent: 0 };
+      ?? { twitter_calls: 0, llm_calls: 0, email_attempts: 0, emails_sent: 0,
+        input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, total_tokens: 0, usage_reports: 0 };
   }
   async summary(): Promise<Record<string, number>> {
     const rows = await this.db.prepare('SELECT status,COUNT(*) AS count FROM tweets GROUP BY status')

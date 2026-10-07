@@ -1,4 +1,7 @@
-import { ConfigError, currentlyActive, parseConfig } from './config';
+import { ConfigError, parseConfig } from './config';
+import { dashboard } from './dashboard';
+import { loadRuntimeEnv } from './settings';
+import { operationalStatus } from './status';
 import { errorCode, log, RadarError } from './log';
 import { Store } from './store';
 import { poll } from './poll';
@@ -49,39 +52,28 @@ async function readTestTweet(request: Request): Promise<Tweet> {
     isReply: false, isRetweet: false, isQuote: false, url: postUrl(username, data.tweetId), test: true };
 }
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    if (url.pathname === '/' && request.method === 'GET') return new Response(null, { status: 302, headers: { Location: '/dashboard', 'Cache-Control': 'no-store' } });
+    if (url.pathname === '/dashboard' || url.pathname.startsWith('/dashboard/')) return dashboard(request, env, ctx);
     if (!['/health','/status','/poll','/test/tweet'].includes(url.pathname)) return json({ error: 'not_found' }, 404);
     if (!await authorized(request, env)) return json({ error: 'unauthorized' }, 401);
     const method = url.pathname === '/health' || url.pathname === '/status' ? 'GET' : 'POST';
     if (request.method !== method) return new Response(null, { status: 405, headers: { Allow: method } });
     try {
+      if (url.pathname === '/poll') return json(await poll(env, url.searchParams.get('force') === 'true'));
+      env = await loadRuntimeEnv(env);
       if (url.pathname === '/health') {
         // A readiness check includes configuration and an actual database read.
         parseConfig(env); await new Store(env.DB).state();
         return json({ ok: true, service: 'x-reply-radar' });
       }
       if (url.pathname === '/status') {
-        const config = parseConfig(env); const store = new Store(env.DB); const state = await store.state();
-        const counters = await store.counters();
-        let next = Math.max(Date.now(), Math.max(state.lastSuccessfulPollAt ?? 0, state.lastAttemptPollAt ?? 0) + config.pollIntervalMinutes * 60_000);
-        while (config.enabled && !currentlyActive(config, next)) next += 60_000;
-        return json({ enabled: config.enabled, activeHours: { ...config.activeHours, currentlyActive: currentlyActive(config, Date.now()) },
-          pollIntervalMinutes: config.pollIntervalMinutes,
-          initializedAt: state.initializedAt ? new Date(state.initializedAt).toISOString() : null,
-          lastSuccessfulPollAt: state.lastSuccessfulPollAt ? new Date(state.lastSuccessfulPollAt).toISOString() : null,
-          lastAttemptPollAt: state.lastAttemptPollAt ? new Date(state.lastAttemptPollAt).toISOString() : null,
-          nextEligiblePollAt: config.enabled && config.accounts.length ? new Date(next).toISOString() : null,
-          watchedAccountCount: config.accounts.length, sendSkipEmails: config.sendSkipEmails,
-          counters: { day: new Date().toISOString().slice(0, 10), twitterApiCalls: counters.twitter_calls,
-            llmCalls: counters.llm_calls, emailAttempts: counters.email_attempts, emailsSent: counters.emails_sent },
-          limits: { maxTweetsPerPoll: config.maxTweets, maxSearchPagesPerPoll: config.maxPages,
-            dailyTwitterCalls: config.dailyTwitter, dailyLlmCalls: config.dailyLlm, dailyEmailAttempts: config.dailyEmails },
-          workflowCounts: await store.summary(), discoveryBacklog: Boolean(state.scan) });
+        return json(await operationalStatus(env));
       }
-      if (url.pathname === '/poll') return json(await poll(env, url.searchParams.get('force') === 'true'));
       const tweet = await readTestTweet(request);
       const config = parseConfig(env); const store = new Store(env.DB);
+      if (!config.operationsEnabled) return json({ error: 'all_operations_disabled' }, 409);
       if (!await store.acquire()) return json({ status: 'locked', retry: 'Try again after the current poll finishes' }, 409);
       try {
         await store.cleanup(); await store.enqueue(tweet);
@@ -106,7 +98,7 @@ export default {
       }
       const code = errorCode(error);
       log('request_failed', { stage: 'http', code, success: false });
-      return json({ error: code }, code.startsWith('test_') ? 400 : 503);
+      return json({ error: code }, code === 'all_operations_disabled' ? 409 : code.startsWith('test_') ? 400 : 503);
     }
   },
   async scheduled(_event: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {

@@ -30,14 +30,14 @@ export async function processTweet(row: TweetRow, store: Store, env: Env, config
       else {
         const key = requireSecret(env, 'LLM_API_KEY');
         // Reserve the first paid call before counting a generation attempt.
-        await store.reserve('llm_calls', config.dailyLlm);
+        let usageDay = await store.reserve('llm_calls', config.dailyLlm, config);
         row.generation_attempts++;
         await store.update(row.id, { generation_attempts: row.generation_attempts });
         let first = true;
         const generateReplies = createGenerator(config, key, async () => {
           if (first) { first = false; await store.renew(); }
-          else await store.reserve('llm_calls', config.dailyLlm);
-        });
+          else usageDay = await store.reserve('llm_calls', config.dailyLlm, config);
+        }, usage => store.recordUsage(usage, usageDay));
         result = await generateReplies(tweet);
       }
       if (result.fit === 'skip' && !config.sendSkipEmails) {
@@ -68,7 +68,7 @@ export async function processTweet(row: TweetRow, store: Store, env: Env, config
     if (row.email_attempts >= MAX_ATTEMPTS) {
       await store.update(row.id, { status: 'uncertain', error_code: 'email_attempts_exhausted' }); return;
     }
-    await store.reserve('email_attempts', config.dailyEmails);
+    await store.reserve('email_attempts', config.dailyEmails, config);
     row.send_started_at ??= Date.now();
     row.email_attempts++;
     // Persist before sending. Retries use precisely the same payload and tweet-based key.
@@ -80,7 +80,7 @@ export async function processTweet(row: TweetRow, store: Store, env: Env, config
   } catch (error) {
     const code = errorCode(error);
     log('tweet_failed', { tweetId: row.id, username: tweet.username, stage, code, durationMs: Date.now() - start, success: false });
-    if (code === 'lease_lost') throw error;
+    if (code === 'lease_lost' || code === 'all_operations_disabled') throw error;
     const budget = code.startsWith('daily_limit_');
     const exhausted = !budget && (stage === 'generation' ? row.generation_attempts >= MAX_ATTEMPTS : row.email_attempts >= MAX_ATTEMPTS);
     await store.update(row.id, {

@@ -1,4 +1,5 @@
 import type { Env } from './types';
+import { SYSTEM_PROMPT } from './prompt';
 export class ConfigError extends Error {
   constructor(public readonly field: string) { super(`Invalid configuration: ${field}`); }
 }
@@ -42,11 +43,14 @@ export function parseConfig(env: Env) {
   if (start === end) throw new ConfigError('ACTIVE_HOURS_END');
   return {
     enabled: bool(env.X_REPLY_RADAR_ENABLED, true, 'X_REPLY_RADAR_ENABLED'),
+    operationsEnabled: bool(env.ALL_OPS_ENABLED, true, 'ALL_OPS_ENABLED'),
     activeHours: { enabled: bool(env.ACTIVE_HOURS_ENABLED, true, 'ACTIVE_HOURS_ENABLED'), start, end, timezone },
     pollIntervalMinutes: integer(env.POLL_INTERVAL_MINUTES, 2, 1, 60, 'POLL_INTERVAL_MINUTES'),
     sendSkipEmails: bool(env.SEND_SKIP_EMAILS, false, 'SEND_SKIP_EMAILS'),
+    pauseAtDailyLimits: bool(env.PAUSE_AT_DAILY_LIMITS, true, 'PAUSE_AT_DAILY_LIMITS'),
     accounts,
     llmBaseUrl: base.toString().replace(/\/$/, ''), llmModel: model,
+    llmContext: env.LLM_CONTEXT ?? '', llmPrompt: env.LLM_SYSTEM_PROMPT ?? SYSTEM_PROMPT,
     emailFrom: env.EMAIL_FROM ?? '', emailTo: env.EMAIL_TO ?? '',
     maxTweets: integer(env.MAX_TWEETS_PER_POLL, 5, 1, 20, 'MAX_TWEETS_PER_POLL'),
     maxPages: integer(env.MAX_SEARCH_PAGES_PER_POLL, 3, 1, 5, 'MAX_SEARCH_PAGES_PER_POLL'),

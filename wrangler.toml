@@ -25,6 +25,8 @@ ACTIVE_HOURS_END = "23:00"
 ACTIVE_TIMEZONE = "America/Moncton"
 POLL_INTERVAL_MINUTES = "2"
 SEND_SKIP_EMAILS = "false"
+ALL_OPS_ENABLED = "true"
+PAUSE_AT_DAILY_LIMITS = "true"
 WATCHED_ACCOUNTS = '["levelsio"]' # Replace with your hand-picked usernames.
 LLM_BASE_URL = "https://api.openai.com/v1"
 LLM_MODEL = "gpt-6-luna"
@@ -33,3 +35,8 @@ MAX_SEARCH_PAGES_PER_POLL = "3"
 MAX_DAILY_TWITTER_CALLS = "1000"
 MAX_DAILY_LLM_CALLS = "100"
 MAX_DAILY_EMAILS = "50"
+
+[[rules]]
+type = "Text"
+globs = ["**/*.html"]
+fallthrough = false

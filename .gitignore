@@ -2,6 +2,7 @@ node_modules/
 dist/
 .wrangler/
 .wrangler.deploy.toml
+.wrangler.dashboard.toml
 .dev.vars
 .dev.vars.*
 .env

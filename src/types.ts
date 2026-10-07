@@ -16,6 +16,11 @@ export interface Env {
   WATCHED_ACCOUNTS?: string;
   LLM_BASE_URL?: string;
   LLM_MODEL?: string;
+  LLM_CONTEXT?: string;
+  LLM_SYSTEM_PROMPT?: string;
+  ACCESS_AUD?: string;
+  PAUSE_AT_DAILY_LIMITS?: string;
+  ALL_OPS_ENABLED?: string;
   MAX_TWEETS_PER_POLL?: string;
   MAX_SEARCH_PAGES_PER_POLL?: string;
   MAX_DAILY_TWITTER_CALLS?: string;
@@ -79,4 +84,10 @@ export interface Counters {
   llm_calls: number;
   email_attempts: number;
   emails_sent: number;
+  input_tokens: number;
+  cached_input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  usage_reports: number;
 }
+export interface TokenUsage { input: number; cachedInput: number; output: number; total: number }
